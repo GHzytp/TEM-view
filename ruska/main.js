@@ -3,7 +3,7 @@
 import { INSTRUMENTS, optics, blur, ruskaD, mtf, screenBrightness, heating, relV, focusCurrent } from './optics.js';
 import { SPECIMENS, cover, onDiatom } from './specimens.js';
 import { createScreen } from './screen.js';
-import { Knob, Pad, Gauge } from './ui.js';
+import { Knob, MagnetMap, Gauge } from './ui.js';
 import { PARTS, CONTROLS } from './texts.js';
 import { lang, tr, num, fmtInt, applyStatic, setLang, onLang } from './i18n.js';
 import { Console } from './console.js';
@@ -116,8 +116,9 @@ function buildPanel() {
   go.appendChild(fresh);
   if (I.magnet) {
     const sb = document.createElement('div'); sb.className = 'stagebox'; go.appendChild(sb);
-    pad = new Pad(sb, { range: 240, x: S.magnet[0], y: S.magnet[1], onInput: (x, y) => (S.magnet = [x, y]), onFocus: info('magnet') });
-    const p = document.createElement('p'); p.innerHTML = tr(['<b style="color:var(--fg);font-weight:500">Hand magnet.</b> Earth’s field bends the beam off the axis. Push it back with a steel magnet held against the column.', '<b style="color:var(--fg);font-weight:500">Handmagnet.</b> Das Erdfeld biegt den Strahl von der Achse. Holen Sie ihn mit einem Stahlmagneten an der Säule zurück.']); sb.appendChild(p);
+    pad = new MagnetMap(sb, { get: magnetView, set: setBeamOnScreen, onFocus: info('magnet'),
+      aria: tr(['Hand magnet: drag the beam spot into the ring, or use the arrow keys', 'Handmagnet: den Strahlfleck in den Ring ziehen, oder Pfeiltasten benutzen']) });
+    const p = document.createElement('p'); p.innerHTML = tr(['<b style="color:var(--fg);font-weight:500">Hand magnet.</b> Earth’s field bends the beam off the axis. The ring is the viewing window, the glow is the beam: drag it into the ring, and the beam moves the same way on the screen.', '<b style="color:var(--fg);font-weight:500">Handmagnet.</b> Das Erdfeld biegt den Strahl von der Achse. Der Ring ist das Beobachtungsfenster, das Leuchten der Strahl: Ziehen Sie ihn in den Ring, und der Strahl bewegt sich auf dem Schirm in dieselbe Richtung.']); sb.appendChild(p);
   } else pad = null;
   // plate camera
   const gk = group(['Plate camera', 'Aufnahmekammer'], 'stPlate');
@@ -169,6 +170,20 @@ function liveNote() {
 }
 
 // ------------------------------------------------------------------ screen interaction: drag moves the stage, wheel turns the projector
+// the hand magnet works in screen directions: the beam offset on the screen is the specimen offset turned by the
+// image rotation (as the shader draws it); setting it turns back and leaves Earth's field where it is
+const rotate = ([x, y], a) => [Math.cos(a) * x - Math.sin(a) * y, Math.sin(a) * x + Math.cos(a) * y];
+function magnetView() {
+  const op = D.op; if (!op) return { d: [0, 0], s: 1, rs: 1, on: false };
+  return { d: rotate(op.beamOff, op.rot), s: op.field / 2, rs: op.rs, on: D.on };
+}
+function setBeamOnScreen(d) {
+  const op = D.op; if (!op) return;
+  const earth = [op.beamOff[0] - S.magnet[0], op.beamOff[1] - S.magnet[1]], off = rotate(d, -op.rot), lim = 600;
+  S.magnet = [Math.max(-lim, Math.min(lim, off[0] - earth[0])), Math.max(-lim, Math.min(lim, off[1] - earth[1]))];
+  // keep the image in step with the map while dragging
+  D.op = optics({ inst: S.inst, kV: Math.max(D.kV || 1, 1), oc: S.oc, of: S.of, p: S.p, c: S.c, view: S.view, magnet: S.magnet });
+}
 function moveView(dx, dy) { const c = Math.cos(-D.op.rot), s = Math.sin(-D.op.rot); S.stage[0] += c * dx - s * dy; S.stage[1] += s * dx + c * dy; }
 {
   let last = null;
@@ -423,7 +438,7 @@ const con = new Console({
       nudge('q', n * 0.01); return `${tr(['Discharge', 'Röhrenstrom'])} ${num(S.q * 1.5, 2)} mA`;
     }
     if (ax === 'context') { nudge('hv', n * 0.5); return `${tr(['High voltage', 'Hochspannung'])} ${num(S.hvSet, 1)} kV`; }
-    if (ax === 'magnetX' || ax === 'magnetY') { if (!pad) return ''; const d = n * 2; pad.set(S.magnet[0] + (ax === 'magnetX' ? d : 0), S.magnet[1] + (ax === 'magnetY' ? d : 0)); if (noteKey !== 'magnet') showNote('magnet'); return `${tr(['Hand magnet', 'Handmagnet'])} · ${de ? 'Strahl' : 'beam'} ${num(Math.hypot(...(D.op?.beamOff ?? [0, 0])), 0)} µm ${de ? 'neben der Achse' : 'off axis'}`; }
+    if (ax === 'magnetX' || ax === 'magnetY') { if (!pad) return ''; pad.nudge(ax === 'magnetX' ? n : 0, ax === 'magnetY' ? n : 0, 0.03); if (noteKey !== 'magnet') showNote('magnet'); return `${tr(['Hand magnet', 'Handmagnet'])} · ${de ? 'Strahl' : 'beam'} ${num(Math.hypot(...(D.op?.beamOff ?? [0, 0])), 0)} µm ${de ? 'neben der Achse' : 'off axis'}`; }
     if (ax === 'dischargeX') { nudge('q', n * 0.01); return `${tr(['Discharge', 'Röhrenstrom'])} ${num(S.q * 1.5, 2)} mA`; }
     if (ax === 'dischargeY') { nudge('hv', n * 0.1); return `${tr(['High voltage', 'Hochspannung'])} ${num(S.hvSet, 1)} kV`; }
     return '';
@@ -598,7 +613,7 @@ function readouts() {
   $('expHint').textContent = S.exposing ? `${num(S.exp.t, 1)} s` : '';
   if (S.exposing) { $('expTime').textContent = `${num(S.exp.t, 1)} s`; $('expBar').style.width = `${Math.min(100, (S.exp.E / E0) * 60)}%`; }
   $('shutter').firstElementChild.textContent = tr(['Plate exposing', 'Platte wird belichtet']);
-  budgetUI(); liveNote();
+  budgetUI(); liveNote(); pad?.draw();
   con.hud($('hud')); consoleUI();
 }
 

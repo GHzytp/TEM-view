@@ -59,26 +59,56 @@ export class Knob {
   }
 }
 
-// A steel hand magnet over the column: a 2D pad (µm of beam shift)
-export class Pad {
+// The hand magnet as a map of the viewing window: the ring is the window, the glow is the beam spot where it
+// really falls on the screen. Drag the spot and it moves the same way on the screen. Near the centre the map is
+// linear and scales with the magnification (fine steps at 12,000×); far out it compresses, so a beam far off
+// the axis is still on the map and can be pulled back in one drag.
+//   o.get() → { d: [x, y] beam offset on the screen (µm in the specimen, screen-aligned), s: window radius (µm), rs: spot radius (µm), on }
+//   o.set([x, y]) puts the beam at that screen offset
+export class MagnetMap {
   constructor(host, o) {
-    Object.assign(this, { range: 80, x: 0, y: 0, onInput: () => {}, onFocus: () => {} }, o);
-    this.root = document.createElement('div'); this.root.className = 'pad'; this.root.tabIndex = 0; this.root.setAttribute('role', 'group');
-    this.root.setAttribute('aria-label', 'Hand magnet: drag or use the arrow keys to push the beam back onto the axis');
-    this.dot = document.createElement('b'); this.root.appendChild(this.dot); host.appendChild(this.root);
-    const move = (e) => { const r = this.root.getBoundingClientRect(); this.set(((e.clientX - r.left) / r.width * 2 - 1) * this.range, -((e.clientY - r.top) / r.height * 2 - 1) * this.range); };
-    let on = false;
-    this.root.addEventListener('pointerdown', (e) => { on = true; this.root.setPointerCapture(e.pointerId); move(e); });
-    this.root.addEventListener('pointermove', (e) => on && move(e));
-    this.root.addEventListener('pointerup', () => (on = false));
-    this.root.addEventListener('keydown', (e) => { const st = this.range * (e.shiftKey ? 0.01 : 0.05); const k = { ArrowLeft: [-st, 0], ArrowRight: [st, 0], ArrowUp: [0, st], ArrowDown: [0, -st] }[e.key]; if (k) { this.set(this.x + k[0], this.y + k[1]); e.preventDefault(); } });
+    Object.assign(this, { onFocus: () => {} }, o);
+    this.root = document.createElement('div'); this.root.className = 'pad'; this.root.tabIndex = 0; this.root.setAttribute('role', 'application');
+    this.root.setAttribute('aria-label', o.aria || 'Hand magnet: drag the beam spot into the ring, or use the arrow keys');
+    this.cv = document.createElement('canvas'); this.root.appendChild(this.cv); host.appendChild(this.root);
+    // dragging is incremental: the beam moves exactly in the direction of the finger, by the map's local scale
+    let last = null;
+    this.root.addEventListener('pointerdown', (e) => { try { this.root.setPointerCapture(e.pointerId); } catch {} last = [e.clientX, e.clientY]; e.preventDefault(); });
+    this.root.addEventListener('pointermove', (e) => { if (!last) return;
+      const dx = e.clientX - last[0], dy = -(e.clientY - last[1]); last = [e.clientX, e.clientY];
+      const g = this.get(), k = this.gain(g) * (e.shiftKey ? 0.2 : 1);
+      this.set([g.d[0] + dx * k, g.d[1] + dy * k]); this.draw(); });
+    const up = () => { last = null; }; this.root.addEventListener('pointerup', up); this.root.addEventListener('pointercancel', up);
+    this.root.addEventListener('keydown', (e) => { const k = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[e.key]; if (!k) return;
+      this.nudge(k[0], k[1], e.shiftKey ? 0.01 : 0.05); e.preventDefault(); });
     this.root.addEventListener('focus', () => this.onFocus()); this.root.addEventListener('pointerenter', () => this.onFocus());
-    this.set(this.x, this.y, false);
+    new ResizeObserver(() => this.draw()).observe(this.root);
   }
-  set(x, y, emit = true) {
-    const c = (v) => Math.max(-this.range, Math.min(this.range, v)); this.x = c(x); this.y = c(y);
-    this.dot.style.left = (50 + (this.x / this.range) * 42) + '%'; this.dot.style.top = (50 - (this.y / this.range) * 42) + '%';
-    if (emit) this.onInput(this.x, this.y);
+  get R() { return (this.cv.clientWidth || 150) / 2 - 4; }
+  // screen offset (µm) → map position (px): r = R d / (d + s)
+  toMap(d, s) { const L = Math.hypot(d[0], d[1]); if (!L) return [0, 0]; const r = (this.R * L) / (L + s); return [(d[0] / L) * r, (d[1] / L) * r]; }
+  // µm of beam movement per pixel of finger movement where the beam is now: dL/dr of the map, capped at the rim
+  gain(g) { const r = Math.min(Math.hypot(...this.toMap(g.d, g.s)), this.R * 0.9); return (g.s * this.R) / (this.R - r) ** 2; }
+  // move the beam by a fraction of the window radius, in screen directions
+  nudge(x, y, f) { const g = this.get(); this.set([g.d[0] + x * f * g.s, g.d[1] + y * f * g.s]); this.draw(); }
+  draw() {
+    const cv = this.cv, w = cv.clientWidth, dpr = Math.min(devicePixelRatio || 1, 2); if (!w) return;
+    if (cv.width !== Math.round(w * dpr)) { cv.width = cv.height = Math.round(w * dpr); }
+    const c = cv.getContext('2d'), R = this.R, g = this.get();
+    c.setTransform(dpr, 0, 0, -dpr, (w / 2) * dpr, (w / 2) * dpr); c.clearRect(-w, -w, 2 * w, 2 * w);
+    // the viewing window (d = s) and the axis
+    c.strokeStyle = 'rgba(224,178,94,0.75)'; c.lineWidth = 1.5; c.beginPath(); c.arc(0, 0, R / 2, 0, 7); c.stroke();
+    c.strokeStyle = 'rgba(255,236,200,0.12)'; c.lineWidth = 1; c.beginPath(); c.arc(0, 0, R, 0, 7); c.stroke();
+    c.beginPath(); c.moveTo(-5, 0); c.lineTo(5, 0); c.moveTo(0, -5); c.lineTo(0, 5); c.strokeStyle = 'rgba(255,236,200,0.5)'; c.stroke();
+    // the beam spot, its size mapped the same way
+    const p = this.toMap(g.d, g.s), L = Math.hypot(g.d[0], g.d[1]);
+    const rOut = (R * (L + g.rs)) / (L + g.rs + g.s), rIn = (R * Math.max(0, L - g.rs)) / (Math.max(0, L - g.rs) + g.s);
+    const rad = Math.max(4, (rOut - rIn) / 2);
+    const gr = c.createRadialGradient(p[0], p[1], 0, p[0], p[1], rad);
+    const a = g.on ? 0.95 : 0.35;
+    gr.addColorStop(0, `rgba(200,255,170,${a})`); gr.addColorStop(0.7, `rgba(120,230,90,${a * 0.6})`); gr.addColorStop(1, 'rgba(120,230,90,0)');
+    c.fillStyle = gr; c.beginPath(); c.arc(p[0], p[1], rad, 0, 7); c.fill();
+    c.strokeStyle = g.on ? 'rgba(220,255,200,0.9)' : 'rgba(220,255,200,0.4)'; c.lineWidth = 1.5; c.beginPath(); c.arc(p[0], p[1], Math.min(rad, 9), 0, 7); c.stroke();
   }
 }
 
