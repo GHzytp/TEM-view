@@ -363,7 +363,7 @@ for (const m of MISSIONS) {
     if (!m.steps.length) return;
     const last = m.steps.length - 1;
     if (stepI < last) { coach(['Good plate, but finish the steps above first: the mission checks them in order.', 'Gute Platte, aber erledigen Sie zuerst die Schritte darüber: Die Mission prüft sie der Reihe nach.']); return; }
-    if (m.pass(p)) { done.add(last); stepI = last + 1; stepsUI(); finished.add(m.id); markMissions(); coach(['Mission complete.', 'Mission erfüllt.']); showResult(m, p); }
+    if (m.pass(p)) { done.add(last); stepI = last + 1; stepsUI(); finished.add(m.id); usage.count(`done.${m.id}`); markMissions(); coach(['Mission complete.', 'Mission erfüllt.']); showResult(m, p); }
     else coach(p.burst ? ['A gas burst in the discharge tube interrupted the exposure. Take another plate.', 'Ein Gasausbruch im Entladungsrohr hat die Belichtung gestört. Nehmen Sie eine neue Platte.'] : m.fail(p), true);
   };
 }
@@ -460,13 +460,14 @@ const con = new Console({
     return '';
   },
 });
-let conSig = '';
+let conSig = '', conCounted = false;
 function openConsole() { conSig = ''; consoleUI(); if (!$('consoleDlg').open) $('consoleDlg').showModal(); }
 function consoleUI() {
   const sig = `${con.pad?.id || ''}|${con.kind}|${lang}`;
   if ($('consoleDlg').open && sig !== conSig) { conSig = sig; con.render($('consoleBody')); }
   if ($('consoleDlg').open) con.live($('cLive'));
   $('consoleDot').hidden = !con.pad;
+  if (con.pad && !conCounted) { conCounted = true; usage.count('console'); usage.input('panel'); }
 }
 $('consoleBtn').onclick = openConsole;
 

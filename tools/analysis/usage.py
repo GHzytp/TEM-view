@@ -2,7 +2,14 @@
 """Summary of TEM-view usage metrics ("tem-view-usage/1", the daily usage/<year>/<day>.jsonl files).
 
 Usage:
-    python3 tools/analysis/usage.py usage/2026/*.jsonl [--csv visits.csv] [--map map.html]
+    python3 tools/analysis/usage.py usage/2026/*.jsonl [--page ruska] [--since 2026-11-01] [--until 2026-11-30]
+                                    [--disclose] [--csv visits.csv] [--map map.html]
+    python3 tools/analysis/usage.py --d1 --page ruska --disclose      # live, from the collector's database
+
+--page keeps one exhibit (tem-view, ruska, scanning); --since/--until keep a range of days (UTC, inclusive).
+--disclose prints a short aggregate statement that is safe to publish: totals, countries, engaged time and what
+was done, no cities or single visits. --d1 reads the collector's D1 database directly (the last 90 days, including
+today) with wrangler from hf/worker, which needs a `wrangler login` with access to the account.
 
 Prints visits per day and per exhibit, unique visitors per day (the daily visitor key), countries and cities,
 time in view, the most used modes and specimens, feature counts and devices. --csv writes one row per visit;
@@ -15,6 +22,8 @@ Needs only the standard library.
 import argparse
 import csv
 import json
+import os
+import subprocess
 from collections import Counter, defaultdict
 from statistics import median
 
@@ -31,6 +40,46 @@ def load(paths):
                     if v.get("format") == FORMAT:
                         visits.append(v)
     return visits
+
+
+def load_d1():
+    # the worker folder holds wrangler.toml (and, after `npm ci`, wrangler itself); TEMVIEW_WORKER overrides it
+    worker = os.environ.get("TEMVIEW_WORKER") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "hf", "worker")
+    r = subprocess.run(["npx", "wrangler", "d1", "execute", "tem-view-usage", "--remote", "--json",
+                        "--command", "SELECT record FROM usage ORDER BY day"], cwd=worker, capture_output=True, text=True)
+    if r.returncode:
+        raise SystemExit(f"wrangler failed (run `npm ci` and `npx wrangler login` in {worker}):\n{r.stderr or r.stdout}")
+    visits = [json.loads(row["record"]) for row in json.loads(r.stdout)[0]["results"]]
+    return [v for v in visits if v.get("format") == FORMAT]
+
+
+# a visit left open in a background tab or on a kiosk can count hours of "view"; for engaged time each visit
+# counts at most this long
+CAP_S = 3600
+
+
+def disclose(visits, label):
+    days = sorted({v["started"][:10] for v in visits})
+    people = {(v["started"][:10], v.get("visitor")) for v in visits if v.get("visitor")}
+    countries = Counter(v.get("country") for v in visits if v.get("country"))
+    act = [min(v["active_s"], CAP_S) for v in visits]
+    engaged = [a for a in act if a >= 60]
+    dev = Counter(v.get("device") or "?" for v in visits)
+    lang = Counter((v.get("lang") or "?")[:2] for v in visits)
+    counts = Counter()
+    for v in visits:
+        counts.update(v.get("counts", {}))
+    n = len(visits)
+    pct = lambda c: ", ".join(f"{k} {100 * x / n:.0f} %" for k, x in c.most_common(4))
+    print(f"{label}, {days[0]} to {days[-1]} ({len(days)} days with visits)")
+    print(f"- {n} visits" + (f" by {len(people)} visitor-days (one person on one day counts once)" if people else ""))
+    print(f"- from {len(countries)} countries: {top(countries, 12)}")
+    print(f"- time in view: median {minutes(median(act))} per visit, {sum(act) / 3600:.1f} h in all "
+          f"(each visit capped at {CAP_S // 60} min); {len(engaged)} visits ({100 * len(engaged) / n:.0f} %) lasted a minute or more")
+    print(f"- devices: {pct(dev)}; languages: {pct(lang)}")
+    if counts:
+        print(f"- used: {top(counts, 12)}")
+    print("Anonymous: no cookies, no stored IP address, Do Not Track respected; local test copies are not counted.")
 
 
 def top(counter, n=10):
@@ -103,14 +152,27 @@ for(const p of P)L.circleMarker([p.lat,p.lon],{{radius:4+3*Math.sqrt(p.n)}}).bin
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("files", nargs="+")
+    ap.add_argument("files", nargs="*")
+    ap.add_argument("--d1", action="store_true", help="read the collector's D1 database (live) instead of files")
+    ap.add_argument("--page", help="one exhibit: tem-view, ruska or scanning")
+    ap.add_argument("--since", help="first day, YYYY-MM-DD (UTC)")
+    ap.add_argument("--until", help="last day, YYYY-MM-DD (UTC)")
+    ap.add_argument("--disclose", action="store_true", help="print a short aggregate statement to publish")
     ap.add_argument("--csv")
     ap.add_argument("--map")
     a = ap.parse_args()
-    visits = load(a.files)
+    if not a.files and not a.d1:
+        ap.error("give usage files or --d1")
+    visits = (load_d1() if a.d1 else []) + load(a.files)
+    visits = [v for v in visits if (not a.page or v["page"] == a.page)
+              and (not a.since or v["started"][:10] >= a.since) and (not a.until or v["started"][:10] <= a.until)]
     if not visits:
         raise SystemExit("no tem-view-usage/1 records")
-    summary(visits)
+    if a.disclose:
+        names = {"ruska": "Ruska 1933 exhibit", "tem-view": "TEM-view exhibit", "scanning": "Scanning exhibit"}
+        disclose(visits, names.get(a.page, "TEM-view exhibits"))
+    else:
+        summary(visits)
     if a.csv:
         write_csv(visits, a.csv)
     if a.map:
