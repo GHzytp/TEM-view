@@ -62,14 +62,17 @@ h1 em, h2 em { font-style: italic; color: var(--brass); }
 .labgrid { display: grid; gap: 18px; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.1fr) minmax(300px, 0.95fr); grid-template-areas: "stage screen panel"; align-items: start; }
 .col-stage { grid-area: stage; } .col-screen { grid-area: screen; } .col-panel { grid-area: panel; }
 .col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+/* tablets (iPad portrait and landscape): the screen on the left stays in view while the knobs and the mission
+   scroll on the right; the blur budget and the 3D model follow below */
 @media (max-width: 1240px) {
-  .labgrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "screen panel" "stage stage"; }
+  .labgrid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); grid-template-areas: "view panel" "view mission" "budget budget" "stage stage"; }
+  .col-screen { display: contents; }
+  .viewwrap { grid-area: view; align-self: stretch; }
+  .viewer { position: sticky; top: 64px; }
+  .window { width: min(100%, 560px, calc(100vh - 200px)); width: min(100%, 560px, calc(100svh - 200px)); min-width: min(100%, 300px); }
+  .mission { grid-area: mission; } .budget { grid-area: budget; }
   .col-stage { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px; align-items: start; }
   .col-stage .stage { grid-row: span 2; }
-}
-@media (max-width: 860px) {
-  .labgrid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "screen" "panel" "stage"; }
-  .col-stage { display: flex; }
 }
 
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
@@ -186,11 +189,12 @@ h1 em, h2 em { font-style: italic; color: var(--brass); }
 .chips button { padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface); cursor: pointer; font-size: 12.5px; }
 .chips button small { color: var(--muted); font: 500 10.5px var(--mono); margin-left: 4px; }
 .chips button[aria-pressed="true"] { border-color: var(--brass); color: var(--brass); }
-.stagebox { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; margin-top: 12px; }
-.pad { width: 96px; height: 96px; border-radius: 12px; background: repeating-linear-gradient(0deg, transparent 0 15px, rgba(255, 236, 200, 0.05) 15px 16px), repeating-linear-gradient(90deg, transparent 0 15px, rgba(255, 236, 200, 0.05) 15px 16px), var(--surface-2); border: 1px solid var(--line-2); position: relative; cursor: crosshair; touch-action: none; }
-.pad b { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 4px; background: linear-gradient(135deg, #9aa3ad, #4b525a); box-shadow: 0 2px 6px rgb(0 0 0 / 0.6); }
-.pad b::before { content: "N"; position: absolute; inset: 0; display: grid; place-items: center; font: 600 9px var(--mono); color: #c62828; }
+.stagebox { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center; margin-top: 12px; }
+.pad { width: 150px; height: 150px; border-radius: 14px; background: radial-gradient(circle, #1d1912 0%, var(--surface-2) 70%); border: 1px solid var(--line-2); position: relative; cursor: grab; touch-action: none; }
+.pad:active { cursor: grabbing; }
+.pad canvas { display: block; width: 100%; height: 100%; }
 .pad:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+@media (max-width: 420px) { .stagebox { grid-template-columns: minmax(0, 1fr); justify-items: center; } .pad { width: 200px; height: 200px; } }
 .stagebox p { margin: 0; font-size: 12.5px; color: var(--muted); }
 .expose { width: 100%; margin-top: 2px; padding: 12px 16px; border-radius: 12px; border: 1px solid #a8442c; background: linear-gradient(180deg, #3a160e, #250d08); color: #ffd2c2; font: 500 15px var(--body); cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
 .expose small { font: 500 11.5px var(--mono); color: #e09a85; }
@@ -267,10 +271,12 @@ dialog#result::backdrop { background: rgb(0 0 0 / 0.7); backdrop-filter: blur(4p
   .ov.tl { top: 17%; left: 16%; } .ov.tr { top: 17%; right: 15%; }
 }
 /* phones: screen, then the knobs that drive it, then the mission, the budget and the model */
-@media (max-width: 860px) {
+@media (max-width: 700px) {
   .labgrid { display: flex; flex-direction: column; }
-  .col-screen { display: contents; }
-  .viewer { order: 1; } .col-panel { order: 2; } .mission { order: 3; } .budget { order: 4; } .col-stage { order: 5; }
+  .viewwrap { order: 1; } .col-panel { order: 2; } .mission { order: 3; } .budget { order: 4; } .col-stage { order: 5; }
+  .viewer { position: static; }
+  .window { width: min(100%, 560px); min-width: 0; }
+  .col-stage { display: flex; }
   .stage { height: 460px; }
 }
 
